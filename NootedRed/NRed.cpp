@@ -3,6 +3,7 @@
 
 #include "NRed.hpp"
 #include "AppleGFXHDA.hpp"
+#include "Firmware.hpp"
 #include "HWLibs.hpp"
 #include "Model.hpp"
 #include "PatcherPlus.hpp"
@@ -28,10 +29,10 @@ static KernelPatcher::KextInfo kextMCCSControl {"com.apple.driver.AppleMCCSContr
 NRed *NRed::callback = nullptr;
 
 static X6000FB x6000fb;
-static X5000HWLibs hwlibs;
-static X5000 x5000;
-static X6000 x6000;
 static AppleGFXHDA agfxhda;
+static X5000HWLibs hwlibs;
+static X6000 x6000;
+static X5000 x5000;
 
 void NRed::init() {
     SYSLOG("NRed", "Copyright 2022-2024 ChefKiss Inc. If you've paid for this, you've been scammed.");
@@ -40,8 +41,8 @@ void NRed::init() {
     lilu.onKextLoadForce(&kextAGDP);
     lilu.onKextLoadForce(&kextBacklight);
     lilu.onKextLoadForce(&kextMCCSControl);
-    agfxhda.init();
     x6000fb.init();
+    agfxhda.init();
     hwlibs.init();
     x6000.init();
     x5000.init();
@@ -144,12 +145,12 @@ void NRed::processPatcher(KernelPatcher &patcher) {
 
     if ((lilu.getRunMode() & LiluAPI::RunningInstallerRecovery) || checkKernelArgument("-CKFBOnly")) { return; }
 
-    const auto driversXML = getFWByName("Drivers.xml");
-    auto *dataNull = new char[driversXML.size + 1];
-    memcpy(dataNull, driversXML.data, driversXML.size);
-    dataNull[driversXML.size] = 0;
+    const auto &driversXML = getFWByName("Drivers.xml");
+    auto *dataNull = new char[driversXML.length + 1];
+    memcpy(dataNull, driversXML.data, driversXML.length);
+    dataNull[driversXML.length] = 0;
     OSString *errStr = nullptr;
-    auto *dataUnserialized = OSUnserializeXML(dataNull, driversXML.size + 1, &errStr);
+    auto *dataUnserialized = OSUnserializeXML(dataNull, driversXML.length + 1, &errStr);
     delete[] dataNull;
     PANIC_COND(!dataUnserialized, "NRed", "Failed to unserialize Drivers.xml: %s",
         errStr ? errStr->getCStringNoCopy() : "Unspecified");
@@ -157,7 +158,6 @@ void NRed::processPatcher(KernelPatcher &patcher) {
     PANIC_COND(!drivers, "NRed", "Failed to cast Drivers.xml data");
     PANIC_COND(!gIOCatalogue->addDrivers(drivers), "NRed", "Failed to add drivers");
     OSSafeReleaseNULL(dataUnserialized);
-    IOFree(driversXML.data, driversXML.size);
 }
 
 OSMetaClassBase *NRed::wrapSafeMetaCast(const OSMetaClassBase *anObject, const OSMetaClass *toMeta) {

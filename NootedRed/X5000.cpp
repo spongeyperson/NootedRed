@@ -2,6 +2,7 @@
 //! See LICENSE for details.
 
 #include "X5000.hpp"
+#include "Firmware.hpp"
 #include "NRed.hpp"
 #include "PatcherPlus.hpp"
 #include "X6000.hpp"
@@ -276,7 +277,7 @@ static inline void setHWCapability(void *that, HWCapability capability, T value)
                     break;
             }
             break;
-        case KernelVersion::Ventura... KernelVersion::Sonoma:
+        case KernelVersion::Ventura... KernelVersion::Sequoia:
             switch (capability) {
                 case HWCapability::DisplayPipeCount:
                     getMember<T>(that, 0x30 + HWCapabilityVentura::DisplayPipeCount) = value;
@@ -323,7 +324,7 @@ void X5000::wrapGFX9SetupAndInitializeHWCapabilities(void *that) {
     char filename[128] = {0};
     snprintf(filename, arrsize(filename), "%s_gpu_info.bin",
         NRed::callback->chipType < ChipType::Renoir ? NRed::getChipName() : "renoir");
-    const auto gpuInfoBin = getFWByName(filename);
+    const auto &gpuInfoBin = getFWByName(filename);
     auto *header = reinterpret_cast<const CommonFirmwareHeader *>(gpuInfoBin.data);
     auto *gpuInfo = reinterpret_cast<const GPUInfoFirmware *>(gpuInfoBin.data + header->ucodeOff);
 
@@ -331,7 +332,6 @@ void X5000::wrapGFX9SetupAndInitializeHWCapabilities(void *that) {
     setHWCapability<UInt32>(that, HWCapability::SHPerSE, gpuInfo->gcNumShPerSe);
     setHWCapability<UInt32>(that, HWCapability::CUPerSH, gpuInfo->gcNumCuPerSh);
 
-    IOFree(gpuInfoBin.data, gpuInfoBin.size);
     FunctionCast(wrapGFX9SetupAndInitializeHWCapabilities, callback->orgGFX9SetupAndInitializeHWCapabilities)(that);
 }
 

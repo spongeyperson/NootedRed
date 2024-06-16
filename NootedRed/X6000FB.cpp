@@ -132,7 +132,7 @@ bool X6000FB::processKext(KernelPatcher &patcher, size_t id, mach_vm_address_t s
                     kGetFirmwareInfoNullCheckOriginalMask14_4, kGetFirmwareInfoNullCheckPatched14_4,
                     kGetFirmwareInfoNullCheckPatchedMask14_4, 1},
                 {&kextRadeonX6000Framebuffer, kGetVendorInfoOriginal14_4, kGetVendorInfoMask14_4,
-                    kGetVendorInfoPatched14_4, kGetVendorInfoMask14_4, 2},
+                    kGetVendorInfoPatched14_4, kGetVendorInfoPatchedMask14_4, 1},
             };
             PANIC_COND(!LookupPatchPlus::applyAll(patcher, patches, slide, size), "X6000FB",
                 "Failed to apply patches (14.4)");
@@ -141,7 +141,7 @@ bool X6000FB::processKext(KernelPatcher &patcher, size_t id, mach_vm_address_t s
                 {&kextRadeonX6000Framebuffer, kGetFirmwareInfoNullCheckOriginal, kGetFirmwareInfoNullCheckOriginalMask,
                     kGetFirmwareInfoNullCheckPatched, kGetFirmwareInfoNullCheckPatchedMask, 1},
                 {&kextRadeonX6000Framebuffer, kGetVendorInfoOriginal, kGetVendorInfoMask, kGetVendorInfoPatched,
-                    kGetVendorInfoMask, 2},
+                    kGetVendorInfoPatchedMask, 1},
             };
             PANIC_COND(!LookupPatchPlus::applyAll(patcher, patches, slide, size), "X6000FB", "Failed to apply patches");
         }
@@ -335,7 +335,7 @@ IOReturn X6000FB::wrapSetAttributeForConnection(IOService *framebuffer, IOIndex 
     bool success;
 
     //! AMDGPU doesn't use AUX on HDR/SDR displays that can use it. Why?
-    if (callback->supportsAux) {
+    if (callback->supportsAUX) {
         //! TODO: Obtain the actual max brightness for the screen
         UInt32 auxValue = (callback->maxOLED * percentage) / 100;
         //! dc_link_set_backlight_level_nits doesn't print the new backlight level, so we'll do it
@@ -344,8 +344,7 @@ IOReturn X6000FB::wrapSetAttributeForConnection(IOService *framebuffer, IOIndex 
         //! Save the brightness value so the driver can restore it on its own on some specific occasions.
         //! For instance, when waking from sleep.
         NRed::callback->writeReg32(callback->biosScratchReg + 2, auxValue);
-        success =
-            callback->orgDcLinkSetBacklightLevelNits(callback->embeddedPanelLink, callback->isHDR, auxValue, 15000);
+        success = callback->orgDcLinkSetBacklightLevelNits(callback->embeddedPanelLink, true, auxValue, 15000);
     } else {
         UInt32 pwmValue = percentage >= 100 ? 0x1FF00 : ((percentage * 0xFF) / 100) << 8U;
         DBGLOG("X6000FB", "setAttributeForConnection: New PWM brightness: 0x%X", pwmValue);
@@ -423,44 +422,40 @@ void X6000FB::wrapDpReceiverPowerCtrl(void *link, bool power_on) {
 
 void *X6000FB::wrapLinkCreate(void *data) {
     void *ret = FunctionCast(wrapLinkCreate, callback->orgLinkCreate)(data);
-    UInt32 signalType = getMember<UInt32>(ret, 0x38);
-    if (signalType == DC_SIGNAL_TYPE_LVDS || signalType == DC_SIGNAL_TYPE_EDP) {
-        callback->embeddedPanelLink = ret;
-        UInt32 fieldBase;
-        switch (getKernelVersion()) {
-            case KernelVersion::Catalina:
-                fieldBase = 0x1EA;
-                break;
-            case KernelVersion::BigSur:
-                fieldBase = 0x26C;
-                break;
-            case KernelVersion::Monterey:
-                fieldBase = 0x284;
-                break;
-            case KernelVersion::Ventura... KernelVersion::Sonoma:
-                fieldBase = 0x28C;
-                break;
-            default:
-                PANIC("X6000FB", "Unsupported kernel version %d", getKernelVersion());
-        }
-        if (getMember<UInt8>(ret, fieldBase) & DC_DPCD_EXT_CAPS_OLED) {
-            DBGLOG("X6000FB", "Display is OLED.");
-            callback->supportsAux = true;
-            callback->isHDR = true;
-        } else if (getMember<UInt8>(ret, fieldBase) & DC_DPCD_EXT_CAPS_HDR_SUPPORTS_AUX) {
-            DBGLOG("X6000FB", "Display is HDR with aux support.");
-            callback->supportsAux = true;
-            callback->isHDR = true;
-        } else if (getMember<UInt8>(ret, fieldBase) & DC_DPCD_EXT_CAPS_SDR_SUPPORTS_AUX) {
-            DBGLOG("X6000FB", "Display is SDR with aux support.");
-            callback->supportsAux = true;
-        }
 
-        if (callback->supportsAux) {
-            DBGLOG("X6000FB", "Will use aux for display brightness control.");
-        } else {
+    if (!ret) { return nullptr; }
+
+    auto signalType = getMember<UInt32>(ret, 0x38);
+    switch (signalType) {
+        case DC_SIGNAL_TYPE_LVDS: {
+            callback->embeddedPanelLink = ret;
+            callback->supportsAUX = false;
             DBGLOG("X6000FB", "Will use DMCU for display brightness control.");
         }
+        case DC_SIGNAL_TYPE_EDP: {
+            callback->embeddedPanelLink = ret;
+            UInt32 fieldBase;
+            switch (getKernelVersion()) {
+                case KernelVersion::Catalina:
+                    fieldBase = 0x1EA;
+                    break;
+                case KernelVersion::BigSur:
+                    fieldBase = 0x26C;
+                    break;
+                case KernelVersion::Monterey:
+                    fieldBase = 0x284;
+                    break;
+                case KernelVersion::Ventura... KernelVersion::Sequoia:
+                    fieldBase = 0x28C;
+                    break;
+                default:
+                    PANIC("X6000FB", "Unsupported kernel version %d", getKernelVersion());
+            }
+            callback->supportsAUX = (getMember<UInt8>(ret, fieldBase) & DC_DPCD_EXT_CAPS_OLED) != 0;
+
+            DBGLOG("X6000FB", "Will use %s for display brightness control.", callback->supportsAUX ? "AUX" : "DMCU");
+        }
     }
+
     return ret;
 }

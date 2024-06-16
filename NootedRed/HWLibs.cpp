@@ -2,6 +2,7 @@
 //! See LICENSE for details.
 
 #include "HWLibs.hpp"
+#include "Firmware.hpp"
 #include "NRed.hpp"
 #include "PatcherPlus.hpp"
 #include <Headers/kern_api.hpp>
@@ -54,12 +55,9 @@ bool X5000HWLibs::processKext(KernelPatcher &patcher, size_t id, mach_vm_address
         bool sonoma144 = getKernelVersion() > KernelVersion::Sonoma ||
                          (getKernelVersion() == KernelVersion::Sonoma && getKernelMinorVersion() >= 4);
         if (catalina) {
-            RouteRequestPlus requests[] = {
-                {"__ZN16AmdTtlFwServices7getIpFwEjPKcP10_TtlFwInfo", wrapGetIpFw, this->orgGetIpFw},
-                {"_psp_reset_12_0", psp12Reset},
-            };
-            PANIC_COND(!RouteRequestPlus::routeAll(patcher, id, requests, slide, size), "HWLibs",
-                "Failed to route Catalina symbols");
+            RouteRequestPlus request {"__ZN16AmdTtlFwServices7getIpFwEjPKcP10_TtlFwInfo", wrapGetIpFw,
+                this->orgGetIpFw};
+            PANIC_COND(!request.route(patcher, id, slide, size), "HWLibs", "Failed to route getIpFw");
         } else {
             RouteRequestPlus requests[] = {
                 {"__ZN35AMDRadeonX5000_AMDRadeonHWLibsX500025populateFirmwareDirectoryEv",
@@ -76,18 +74,10 @@ bool X5000HWLibs::processKext(KernelPatcher &patcher, size_t id, mach_vm_address
                     {"_psp_bootloader_load_sysdrv_3_1", hwLibsNoop, kPspBootloaderLoadSysdrv31Pattern14_4},
                     {"_psp_bootloader_set_ecc_mode_3_1", hwLibsNoop, kPspBootloaderSetEccMode31Pattern14_4},
                     {"_psp_bootloader_load_sos_3_1", pspBootloaderLoadSos10, kPspBootloaderLoadSos31Pattern14_4},
+                    {"_psp_reset_3_1", hwLibsUnsupported, kPspReset31Pattern14_4},
                 };
                 PANIC_COND(!RouteRequestPlus::routeAll(patcher, id, requests, slide, size), "HWLibs",
                     "Failed to route symbols (>=14.4)");
-                if (NRed::callback->chipType >= ChipType::Renoir) {
-                    RouteRequestPlus request {"_psp_reset_3_1", psp12Reset, kPspReset31Pattern14_4};
-                    PANIC_COND(!request.route(patcher, id, slide, size), "HWLibs",
-                        "Failed to route psp_reset_3_1 (>=14.4)");
-                } else {
-                    RouteRequestPlus request {"_psp_reset_3_1", hwLibsUnsupported, kPspReset31Pattern14_4};
-                    PANIC_COND(!request.route(patcher, id, slide, size), "HWLibs",
-                        "Failed to route psp_reset_3_1 (>=14.4)");
-                }
             } else {
                 RouteRequestPlus requests[] = {
                     {"_psp_bootloader_load_sysdrv_3_1", hwLibsNoop, kPspBootloaderLoadSysdrv31Pattern,
@@ -95,16 +85,10 @@ bool X5000HWLibs::processKext(KernelPatcher &patcher, size_t id, mach_vm_address
                     {"_psp_bootloader_set_ecc_mode_3_1", hwLibsNoop, kPspBootloaderSetEccMode31Pattern},
                     {"_psp_bootloader_load_sos_3_1", pspBootloaderLoadSos10, kPspBootloaderLoadSos31Pattern,
                         kPspBootloaderLoadSos31Mask},
+                    {"_psp_reset_3_1", hwLibsUnsupported, kPspReset31Pattern},
                 };
                 PANIC_COND(!RouteRequestPlus::routeAll(patcher, id, requests, slide, size), "HWLibs",
                     "Failed to route symbols (<14.4)");
-                if (NRed::callback->chipType >= ChipType::Renoir) {
-                    RouteRequestPlus request {"_psp_reset_3_1", psp12Reset, kPspReset31Pattern};
-                    PANIC_COND(!request.route(patcher, id, slide, size), "HWLibs", "Failed to route psp_reset_3_1");
-                } else {
-                    RouteRequestPlus request {"_psp_reset_3_1", hwLibsUnsupported, kPspReset31Pattern};
-                    PANIC_COND(!request.route(patcher, id, slide, size), "HWLibs", "Failed to route psp_reset_3_1");
-                }
             }
         }
 
@@ -270,23 +254,21 @@ void X5000HWLibs::wrapPopulateFirmwareDirectory(void *that) {
     bool isRenoirDerivative = NRed::callback->chipType >= ChipType::Renoir;
 
     auto *filename = isRenoirDerivative ? "ativvaxy_nv.dat" : "ativvaxy_rv.dat";
-    const auto vcnFW = getFWByName(filename);
+    const auto &vcnFW = getFWByName(filename);
     DBGLOG("HWLibs", "VCN firmware filename is %s", filename);
 
     //! VCN 2.2, VCN 1.0
-    auto *fw = callback->orgCreateFirmware(vcnFW.data, vcnFW.size, isRenoirDerivative ? 0x0202 : 0x0100, filename);
+    auto *fw = callback->orgCreateFirmware(vcnFW.data, vcnFW.length, isRenoirDerivative ? 0x0202 : 0x0100, filename);
     PANIC_COND(!fw, "HWLibs", "Failed to create '%s' firmware", filename);
-    //! Can't deallocate, I think. Too bad!
     auto *fwDir = getMember<void *>(that, getKernelVersion() > KernelVersion::BigSur ? 0xB0 : 0xB8);
     PANIC_COND(!callback->orgPutFirmware(fwDir, 6, fw), "HWLibs", "Failed to insert '%s' firmware", filename);
 }
 
 bool X5000HWLibs::wrapGetIpFw(void *that, UInt32 ipVersion, char *name, void *out) {
     if (!strncmp(name, "ativvaxy_rv.dat", 16) || !strncmp(name, "ativvaxy_nv.dat", 16)) {
-        const auto fwDesc = getFWByName(name);
+        const auto &fwDesc = getFWByName(name);
         getMember<const void *>(out, 0x0) = fwDesc.data;
-        getMember<UInt32>(out, 0x8) = fwDesc.size;
-        //! Can't deallocate, too bad!
+        getMember<UInt32>(out, 0x8) = fwDesc.length;
         return true;
     }
     return FunctionCast(wrapGetIpFw, callback->orgGetIpFw)(that, ipVersion, name, out);
@@ -304,7 +286,7 @@ CAILResult X5000HWLibs::pspBootloaderLoadSos10(void *ctx) {
         case KernelVersion::BigSur... KernelVersion::Monterey:
             fieldBase = 0x3124;
             break;
-        case KernelVersion::Ventura... KernelVersion::Sonoma:
+        case KernelVersion::Ventura... KernelVersion::Sequoia:
             fieldBase = 0x391C;
             break;
         default:
@@ -324,7 +306,7 @@ CAILResult X5000HWLibs::pspSecurityFeatureCapsSet10(void *ctx) {
         case KernelVersion::BigSur... KernelVersion::Monterey:
             fieldBase = 0x3120;
             break;
-        case KernelVersion::Ventura... KernelVersion::Sonoma:
+        case KernelVersion::Ventura... KernelVersion::Sequoia:
             fieldBase = 0x3918;
             break;
         default:
@@ -354,7 +336,7 @@ CAILResult X5000HWLibs::pspSecurityFeatureCapsSet12(void *ctx) {
         case KernelVersion::BigSur... KernelVersion::Monterey:
             fieldBase = 0x3120;
             break;
-        case KernelVersion::Ventura... KernelVersion::Sonoma:
+        case KernelVersion::Ventura... KernelVersion::Sequoia:
             fieldBase = 0x3918;
             break;
         default:
@@ -373,34 +355,6 @@ CAILResult X5000HWLibs::pspSecurityFeatureCapsSet12(void *ctx) {
     return kCAILResultSuccess;
 }
 
-CAILResult X5000HWLibs::psp12Reset(void *, UInt32 resetMode) {
-    AMDPSPCommand resetCmd;
-    switch (resetMode) {
-        case 1:
-            resetCmd = kPSPCommandMode1Reset;
-            break;
-        case 2:
-            resetCmd = kPSPCommandMode2Reset;
-            break;
-        default:
-            SYSLOG("HWLibs", "Invalid reset mode for PSP reset");
-            return kCAILResultInvalidArgument;
-    }
-    UInt32 i;
-    for (i = 0; i < AMDGPU_MAX_USEC_TIMEOUT; i++) {
-        if ((NRed::callback->readReg32(MP_BASE + mmMP0_SMN_C2PMSG_64) & 0x8000FFFF) == 0x80000000) { break; }
-        IOSleep(1);
-    }
-    if (i >= AMDGPU_MAX_USEC_TIMEOUT - 1) { return kCAILResultGeneralFailure; }
-    NRed::callback->writeReg32(MP_BASE + mmMP0_SMN_C2PMSG_64, resetCmd);
-    for (i = 0; i < AMDGPU_MAX_USEC_TIMEOUT; i++) {
-        if ((NRed::callback->readReg32(MP_BASE + mmMP0_SMN_C2PMSG_33) & 0x80000000) == 0x80000000) { break; }
-        IOSleep(1);
-    }
-    if (i >= AMDGPU_MAX_USEC_TIMEOUT - 1) { return kCAILResultGeneralFailure; }
-    return kCAILResultSuccess;
-}
-
 CAILResult X5000HWLibs::wrapPspCmdKmSubmit(void *ctx, void *cmd, void *param3, void *param4) {
     char filename[64] = {0};
     size_t off;
@@ -411,7 +365,7 @@ CAILResult X5000HWLibs::wrapPspCmdKmSubmit(void *ctx, void *cmd, void *param3, v
         case KernelVersion::BigSur... KernelVersion::Monterey:
             off = 0xAF8;
             break;
-        case KernelVersion::Ventura... KernelVersion::Sonoma:
+        case KernelVersion::Ventura... KernelVersion::Sequoia:
             off = 0xB48;
             break;
         default:
@@ -528,10 +482,9 @@ CAILResult X5000HWLibs::wrapPspCmdKmSubmit(void *ctx, void *cmd, void *param3, v
             return FunctionCast(wrapPspCmdKmSubmit, callback->orgPspCmdKmSubmit)(ctx, cmd, param3, param4);
     }
 
-    const auto fw = getFWByName(filename);
-    memcpy(data, fw.data, fw.size);
-    getMember<UInt32>(cmd, 0xC) = fw.size;
-    IOFree(fw.data, fw.size);
+    const auto &fw = getFWByName(filename);
+    memcpy(data, fw.data, fw.length);
+    getMember<UInt32>(cmd, 0xC) = fw.length;
 
     return FunctionCast(wrapPspCmdKmSubmit, callback->orgPspCmdKmSubmit)(ctx, cmd, param3, param4);
 }
@@ -554,7 +507,7 @@ CAILResult X5000HWLibs::smuInternalSwInit(void *ctx) {
         case KernelVersion::BigSur... KernelVersion::Monterey:
             fieldBase = 0x280;
             break;
-        case KernelVersion::Ventura... KernelVersion::Sonoma:
+        case KernelVersion::Ventura... KernelVersion::Sequoia:
             fieldBase = 0x2D0;
             break;
         default:
@@ -663,7 +616,7 @@ CAILResult X5000HWLibs::wrapSmu901CreateFunctionPointerList(void *ctx) {
         case KernelVersion::Monterey:
             fieldBase = 0x648;
             break;
-        case KernelVersion::Ventura... KernelVersion::Sonoma:
+        case KernelVersion::Ventura... KernelVersion::Sequoia:
             fieldBase = 0x6C0;
             break;
         default:
