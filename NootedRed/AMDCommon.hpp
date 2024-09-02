@@ -1,5 +1,5 @@
-//! Copyright © 2022-2024 ChefKiss Inc. Licensed under the Thou Shalt Not Profit License version 1.5.
-//! See LICENSE for details.
+// Copyright © 2022-2024 ChefKiss. Licensed under the Thou Shalt Not Profit License version 1.5.
+// See LICENSE for details.
 
 #pragma once
 #include <Headers/kern_util.hpp>
@@ -38,6 +38,7 @@ constexpr UInt32 PPSMC_MSG_PowerUpGfx = 0x6;
 constexpr UInt32 PPSMC_MSG_PowerUpSdma = 0xE;
 constexpr UInt32 PPSMC_MSG_DeviceDriverReset = 0x1E;
 constexpr UInt32 PPSMC_MSG_SoftReset = 0x2E;
+constexpr UInt32 PPSMC_MSG_PowerGateMmHub = 0x35;
 constexpr UInt32 PPSMC_MSG_ForceGfxContentSave = 0x39;
 constexpr UInt32 PPSMC_MSG_PowerGateAtHub = 0x3D;
 
@@ -247,8 +248,8 @@ struct CAILAsicCapsInitEntry {
 enum CAILResult : UInt32 {
     kCAILResultSuccess = 0,
     kCAILResultInvalidArgument,
-    kCAILResultGeneralFailure,
-    kCAILResultResourcesExhausted,
+    kCAILResultFailed,
+    kCAILResultUninitialised,
     kCAILResultUnsupported,
 };
 
@@ -277,7 +278,7 @@ enum CAILIPType : UInt32 {
 
 struct CAILASICGoldenRegisters {
     const CAILIPType ipType;
-    const UInt32 instance;    //! Not sure about that one.
+    const UInt32 instance;    // Not sure about that one.
     const CAILIPGoldenRegister *entries;
 } PACKED;
 
@@ -288,7 +289,7 @@ struct CAILASICGoldenRegisters {
     { .ipType = kCAILIPTypeUnknown, .instance = 0, .entries = nullptr }
 
 struct CAILASICGoldenSettings {
-    //! Golden settings for GPUs emulated using the Cadence Palladium Emulation platform. We don't care.
+    // Golden settings for GPUs emulated using the Cadence Palladium Emulation platform. We don't care.
     const CAILASICGoldenRegisters *palladiumGoldenSettings;
     const CAILASICGoldenRegisters *goldenSettings;
 } PACKED;
@@ -306,9 +307,40 @@ enum AMDPSPCommand : UInt32 {
     kPSPCommandLoadTA = 1,
     kPSPCommandLoadASD = 4,
     kPSPCommandLoadIPFW = 6,
-    kPSPCommandMode1Reset = 0x70000,
-    kPSPCommandMode2Reset = 0xA0000,
 };
+
+enum AMDSMUFWResponse : UInt32 {
+    kSMUFWResponseNoResponse = 0,
+    kSMUFWResponseSuccess = 1,
+    kSMUFWResponseRejectedBusy = 0xFC,
+    kSMUFWResponseRejectedPrereq = 0xFD,
+    kSMUFWResponseUnknownCommand = 0xFE,
+    kSMUFWResponseFailed = 0xFF,
+};
+
+inline CAILResult processSMUFWResponse(const UInt32 value) {
+    switch (value) {
+        case kSMUFWResponseNoResponse:
+            return kCAILResultUninitialised;
+        case kSMUFWResponseSuccess:
+            return kCAILResultSuccess;
+        case kSMUFWResponseRejectedBusy:
+            DBGLOG("AMDCommon", "SMU FW command rejected; SMU is busy");
+            return kCAILResultFailed;
+        case kSMUFWResponseRejectedPrereq:
+            DBGLOG("AMDCommon", "SMU FW command rejected; prequisite was not satisfied");
+            return kCAILResultFailed;
+        case kSMUFWResponseUnknownCommand:
+            DBGLOG("AMDCommon", "Unknown SMU FW command");
+            return kCAILResultUnsupported;
+        case kSMUFWResponseFailed:
+            DBGLOG("AMDCommon", "SMU FW command failed");
+            return kCAILResultFailed;
+        default:
+            SYSLOG("AMDCommon", "Unknown SMU FW response %d", value);
+            return kCAILResultFailed;
+    }
+}
 
 enum AMDUCodeID : UInt32 {
     kUCodeCE = 2,
@@ -349,12 +381,10 @@ static const UInt32 ddiCapsRenoir[16] = {0x800005, 0x500011FE, 0x80000, 0x110010
 
 static const UInt32 ravenDevAttrFlags = 0x49;
 
-constexpr UInt8 DC_DPCD_EXT_CAPS_SDR_SUPPORTS_AUX = 0x1;
-constexpr UInt8 DC_DPCD_EXT_CAPS_HDR_SUPPORTS_AUX = 0x2;
-constexpr UInt8 DC_DPCD_EXT_CAPS_OLED = 0x10;
-
 constexpr UInt32 DC_SIGNAL_TYPE_LVDS = 0x8;
 constexpr UInt32 DC_SIGNAL_TYPE_EDP = 0x80;
+
+constexpr UInt8 DC_DPCD_EXT_CAPS_OLED = 0x10;
 
 //---- Golden Settings ----//
 

@@ -1,8 +1,7 @@
-//! Copyright © 2022-2024 ChefKiss Inc. Licensed under the Thou Shalt Not Profit License version 1.5.
-//! See LICENSE for details.
+// Copyright © 2022-2024 ChefKiss. Licensed under the Thou Shalt Not Profit License version 1.5.
+// See LICENSE for details.
 
 #include "NRed.hpp"
-#include "X6000FB.hpp"
 #include <Headers/kern_api.hpp>
 #include <Headers/plugin_start.hpp>
 
@@ -21,6 +20,6 @@ PluginConfiguration ADDPR(config) {
     nullptr,
     0,
     KernelVersion::Catalina,
-    KernelVersion::Sonoma,
+    KernelVersion::Sequoia,
     []() { nred.init(); },
 };

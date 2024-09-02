@@ -1,5 +1,5 @@
-//! Copyright © 2022-2024 ChefKiss Inc. Licensed under the Thou Shalt Not Profit License version 1.5.
-//! See LICENSE for details.
+// Copyright © 2022-2024 ChefKiss. Licensed under the Thou Shalt Not Profit License version 1.5.
+// See LICENSE for details.
 
 #pragma once
 #include <Headers/kern_patcher.hpp>
@@ -115,11 +115,11 @@ struct LookupPatchPlus : KernelPatcher::LookupPatch {
     bool apply(KernelPatcher &patcher, mach_vm_address_t address, size_t maxSize) const;
 
     static bool applyAll(KernelPatcher &patcher, const LookupPatchPlus *patches, size_t count,
-        mach_vm_address_t address, size_t maxSize);
+        mach_vm_address_t address, size_t maxSize, bool force = false);
 
     template<size_t N>
     static bool applyAll(KernelPatcher &patcher, const LookupPatchPlus (&patches)[N], mach_vm_address_t address,
-        size_t maxSize) {
-        return applyAll(patcher, patches, N, address, maxSize);
+        size_t maxSize, bool force = false) {
+        return applyAll(patcher, patches, N, address, maxSize, force);
     }
 };
